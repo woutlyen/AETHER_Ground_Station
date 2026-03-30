@@ -26,6 +26,7 @@
 #include "cmsis_os2.h"
 #include "stm32f746xx.h"
 #include "stm32f7xx_hal.h"
+#include "stm32f7xx_hal_spi.h"
 #include <stdint.h>
 /* USER CODE END Includes */
 
@@ -558,7 +559,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI1_NSS_GPIO_Port, SPI1_NSS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LD1_Pin|SPI2_INT_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
@@ -604,8 +605,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
-  GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
+  /*Configure GPIO pins : LD1_Pin SPI2_INT_Pin LD3_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = LD1_Pin|SPI2_INT_Pin|LD3_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -670,6 +671,12 @@ static void MX_GPIO_Init(void)
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi){
   if (hspi->Instance == SPI1) {
     osThreadFlagsSet(spiReceiveTaskHandle, 0x00000010U);
+  }
+}
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
+  if (hspi->Instance == SPI2) {
+    osThreadFlagsSet(spiTransmitTaskHandle, 0x00000001U);
   }
 }
 
@@ -922,31 +929,17 @@ void SPITransmitTask(void *argument)
     if (osMessageQueueGet(SPI_Transmit_QueueHandle, &currentTransmitBuffer, NULL, osWaitForever) == osOK) {
       getSPI2 = getSPI2 + 1;
       count3 = osMessageQueueGetCount(SPI_Transmit_QueueHandle);
-      // uint16_t currentStartOffset = 0;
-      // uint8_t lastPacketFlg = 0;
-      // for(;;){
-      //   // The length of the data to be transmitted is the first byte of the buffer, so we read that byte to determine how many bytes to transmit
-      //   uint8_t subPacketLength = currentTransmitBuffer->buffer[currentStartOffset];
 
-      //   lastPacketFlg = currentTransmitBuffer->buffer[currentStartOffset + currentTransmitBuffer->buffer[currentStartOffset]] == 0 ? 1 : 0;
-        
-      //   if (subPacketLength > CC1200_TX_FIFO_SIZE) {
-      //     CC1200_SplitAndTransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
-      //     count4 = count4 + 2;
-      //   } else {
-      //     CC1200_TransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
-      //     count4 = count4 + 1;
-      //   }
+      // Transmit the buffer over SPI2 using DMA
+      HAL_SPI_Transmit_DMA(&hspi2, currentTransmitBuffer->buffer, 1024);
 
-      //   // Wait for flag from GPIO callback indicating that the packet has been transmitted over RF (Flag 0x00000002U)
-      //   osThreadFlagsWait(0x00000002U, osFlagsWaitAny, osWaitForever);
+      // Pulse the SPI2_INT_Pin to indicate to the receiving device that a new buffer is being transmitted
+      HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_SET);
+      osDelay(1); // Keep the pin high for 1ms
+      HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
 
-      //   if (lastPacketFlg == 1) {
-      //     break;
-      //   }
-
-      //   currentStartOffset += subPacketLength;
-      // }
+      // Wait for the transmission to complete by waiting for the flag set in the HAL_SPI_TxCpltCallback callback function
+      osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
 
       // We can now put it back into the the SPI or CAN receive queue depending on its type
       osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
@@ -954,9 +947,6 @@ void SPITransmitTask(void *argument)
     
       currentTransmitBuffer = NULL;
     }
-
-    // Wait until TxCpltCallback sends a flag that it cannot obtain a buffer from the SPI transmit queue (Flag 0x00000001U)
-    // osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
   }
   /* USER CODE END SPITransmitTask */
 }
