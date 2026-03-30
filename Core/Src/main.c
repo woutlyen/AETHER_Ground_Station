@@ -47,21 +47,17 @@ typedef enum {
   Sensor_Data
 } Buffer_Type;
 
-#define BUFFER_SIZE 1023
+#define BUFFER_SIZE 1024
 
 typedef struct {
   uint8_t buffer[BUFFER_SIZE]; // Data buffer
-  Buffer_Type type;
 } buffer_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CAMERA_DATA_BUFFER_COUNT 30
-#define SENSOR_DATA_BUFFER_COUNT 1
-
-#define SPI1_DATA_SIZE SPI_DATASIZE_8BIT
+#define DATA_BUFFER_COUNT 30
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -75,9 +71,9 @@ CRC_HandleTypeDef hcrc;
 
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi1_tx;
 DMA_HandleTypeDef hdma_spi1_rx;
 DMA_HandleTypeDef hdma_spi2_tx;
-DMA_HandleTypeDef hdma_spi2_rx;
 
 UART_HandleTypeDef huart3;
 
@@ -116,11 +112,6 @@ osMessageQueueId_t SPI_Receive_QueueHandle;
 const osMessageQueueAttr_t SPI_Receive_Queue_attributes = {
   .name = "SPI_Receive_Queue"
 };
-/* Definitions for CAN_Receive_Queue */
-osMessageQueueId_t CAN_Receive_QueueHandle;
-const osMessageQueueAttr_t CAN_Receive_Queue_attributes = {
-  .name = "CAN_Receive_Queue"
-};
 /* Definitions for CRC_Queue */
 osMessageQueueId_t CRC_QueueHandle;
 const osMessageQueueAttr_t CRC_Queue_attributes = {
@@ -134,19 +125,17 @@ const osMessageQueueAttr_t SPI_Transmit_Queue_attributes = {
 /* USER CODE BEGIN PV */
 Pkt_Phase Phase = Length_Byte; // Start with expecting the length byte
 
-volatile uint32_t count, count2, count3, count4, count5 = 0;
+volatile uint32_t count, count2, count3, count4, count5, count6 = 0;
 volatile uint32_t getSPI1, putSPI1, getCRC, putCRC, getSPI2, putSPI2 = 0;
 
-static buffer_t *currentCameraBuffer = NULL;
-static buffer_t *prevCameraBuffer = NULL;
-//static buffer_t *currentSensorBuffer = NULL;
+static buffer_t *currentReceiveBuffer = NULL;
+static buffer_t *prevReceiveBuffer = NULL;
 static buffer_t *currentCRCBuffer = NULL;
 static buffer_t *currentTransmitBuffer = NULL;
 
 static CRC_Failure_State crcFailureState = No_CRC_Failure; // Flag to indicate the state of the last CRC check
 
-static buffer_t cameraBuffers[CAMERA_DATA_BUFFER_COUNT];
-static buffer_t sensorBuffers[SENSOR_DATA_BUFFER_COUNT];
+static buffer_t dataBuffers[DATA_BUFFER_COUNT];
 
 /* USER CODE END PV */
 
@@ -235,9 +224,6 @@ int main(void)
   /* creation of SPI_Receive_Queue */
   SPI_Receive_QueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &SPI_Receive_Queue_attributes);
 
-  /* creation of CAN_Receive_Queue */
-  CAN_Receive_QueueHandle = osMessageQueueNew (10, sizeof(buffer_t*), &CAN_Receive_Queue_attributes);
-
   /* creation of CRC_Queue */
   CRC_QueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &CRC_Queue_attributes);
 
@@ -246,16 +232,9 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-  for (int i = 0; i < CAMERA_DATA_BUFFER_COUNT; i++) {
-    cameraBuffers[i].type = Camera_Data;
-    buffer_t *ptr = &cameraBuffers[i];
+  for (int i = 0; i < DATA_BUFFER_COUNT; i++) {
+    buffer_t *ptr = &dataBuffers[i];
     osMessageQueuePut(SPI_Receive_QueueHandle, &ptr, 0, 0);
-  }
-
-  for (int i = 0; i < SENSOR_DATA_BUFFER_COUNT; i++) {
-    sensorBuffers[i].type = Sensor_Data;
-    buffer_t *ptr = &sensorBuffers[i];
-    osMessageQueuePut(CAN_Receive_QueueHandle, &ptr, 0, 0);
   }
   /* USER CODE END RTOS_QUEUES */
 
@@ -400,12 +379,13 @@ static void MX_SPI1_Init(void)
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
-  hspi1.Init.Mode = SPI_MODE_SLAVE;
-  hspi1.Init.Direction = SPI_DIRECTION_2LINES_RXONLY;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -439,19 +419,18 @@ static void MX_SPI2_Init(void)
   /* USER CODE END SPI2_Init 1 */
   /* SPI2 parameter configuration*/
   hspi2.Instance = SPI2;
-  hspi2.Init.Mode = SPI_MODE_MASTER;
+  hspi2.Init.Mode = SPI_MODE_SLAVE;
   hspi2.Init.Direction = SPI_DIRECTION_2LINES;
   hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi2.Init.NSS = SPI_NSS_HARD_INPUT;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   hspi2.Init.CRCPolynomial = 7;
   hspi2.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
-  hspi2.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  hspi2.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi2) != HAL_OK)
   {
     Error_Handler();
@@ -543,15 +522,15 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Stream3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
   /* DMA1_Stream4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
 
 }
 
@@ -576,10 +555,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SPI1_NSS_GPIO_Port, SPI1_NSS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SPI2_NSS_GPIO_Port, SPI2_NSS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, LD1_Pin|LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
@@ -590,11 +569,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USER_Btn_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SPI2_MISO_U_Pin */
-  GPIO_InitStruct.Pin = SPI2_MISO_U_Pin;
+  /*Configure GPIO pin : SPI1_MISO_U_Pin */
+  GPIO_InitStruct.Pin = SPI1_MISO_U_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(SPI2_MISO_U_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(SPI1_MISO_U_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : RMII_REF_CLK_Pin RMII_MDIO_Pin RMII_CRS_DV_Pin */
   GPIO_InitStruct.Pin = RMII_REF_CLK_Pin|RMII_MDIO_Pin|RMII_CRS_DV_Pin;
@@ -603,6 +582,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SPI1_NSS_Pin */
+  GPIO_InitStruct.Pin = SPI1_NSS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SPI1_NSS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA6 */
   GPIO_InitStruct.Pin = GPIO_PIN_6;
@@ -618,18 +604,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD1_Pin SPI2_NSS_Pin LD3_Pin LD2_Pin */
-  GPIO_InitStruct.Pin = LD1_Pin|SPI2_NSS_Pin|LD3_Pin|LD2_Pin;
+  /*Configure GPIO pins : LD1_Pin LD3_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = LD1_Pin|LD3_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PKT_SYNC_RXTX_Pin */
-  GPIO_InitStruct.Pin = PKT_SYNC_RXTX_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  /*Configure GPIO pin : CRC_OK_Pin */
+  GPIO_InitStruct.Pin = CRC_OK_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(PKT_SYNC_RXTX_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(CRC_OK_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : RMII_TXD1_Pin */
   GPIO_InitStruct.Pin = RMII_TXD1_Pin;
@@ -681,124 +667,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi){
-  if (hspi->Instance == SPI1) {
-      uint32_t error = HAL_SPI_GetError(hspi);
-
-      if (error & HAL_SPI_ERROR_OVR)
-      {
-          // Reset state
-          __HAL_SPI_DISABLE(hspi);
-          __HAL_SPI_ENABLE(hspi);
-
-          // Restart reception
-          HAL_SPI_Receive_IT(&hspi1, currentCameraBuffer->buffer, 1);
-
-          Phase = Length_Byte;
-      }
-  }
-}
-
-void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef * hspi)
-{
-  if (hspi->Instance == SPI1) {
-    if (crcFailureState == CRC_Failure) {
-      // Put currentCameraBuffer back into the camera queue so that it can be processed again
-      osMessageQueuePut(SPI_Receive_QueueHandle, &currentCameraBuffer, 0, 0);
-      currentCameraBuffer = NULL;
-      // Send flag to spiReceiveTask indicating that the CRC check of a certain packet has failed (Flag 0x00000002U)
-      osThreadFlagsSet(spiReceiveTaskHandle, 0x00000002U);
-
-    } else {
-      prevCameraBuffer = currentCameraBuffer;
-      currentCameraBuffer = NULL;
-      // Get the next buffer from the camera queue for the next packet
-      if (osMessageQueueGet(SPI_Receive_QueueHandle, &currentCameraBuffer, NULL, 0) == osOK) {
-        getSPI1 = getSPI1 + 1;
-        // Start SPI reception using DMA for the next camera buffer (starting with the length byte)
-        HAL_SPI_Receive_DMA(&hspi1, currentCameraBuffer->buffer, 1023);
-        count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
-      } else {
-        // No buffer available in the camera queue, set flag to spiReceiveTask indicating that it cannot obtain a buffer from the camera queue (Flag 0x00000001U)
-        osThreadFlagsSet(spiReceiveTaskHandle, 0x00000001U);
-      }
-      
-      // The rest of the packet has been received, now put the buffer into the CRC queue for CRC checking
-      osMessageQueuePut(CRC_QueueHandle, &prevCameraBuffer, 0, 0);
-      putSPI1 = putSPI1 + 1;
-
-      prevCameraBuffer = NULL;
-    }
-  }
-}
-
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi){
-  if (hspi->Instance == SPI2) {
-    
-    osThreadFlagsSet(spiTransmitTaskHandle, 0x00000001U);
-
-    /* // Transmission complete for the currentTransmitBuffer
-    // We can now put it back into the the SPI or CAN receive queue depending on its type
-    if (currentTransmitBuffer->type == Camera_Data) {
-      osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
-    } else if (currentTransmitBuffer->type == Sensor_Data) {
-      osMessageQueuePut(CAN_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
-    }
-    currentTransmitBuffer = NULL;
-
-    // Get the next buffer to transmit from the SPI transmit queue (if there is one)
-    if (osMessageQueueGet(SPI_Transmit_QueueHandle, &currentTransmitBuffer, NULL, 0) == osOK) {
-      // The length of the data to be transmitted is the first byte of the buffer, so we read that byte to determine how many bytes to transmit
-      uint8_t totalLength = currentTransmitBuffer->buffer[0];
-      // Start SPI transmission using DMA for the buffer
-      HAL_SPI_Transmit_DMA(&hspi2, currentTransmitBuffer->buffer, totalLength);
-    } else {
-      // No buffer to transmit. Send flag to spiTransmitTask indicating that there is no buffer available for transmission (Flag 0x00000001U)
-      osThreadFlagsSet(spiTransmitTaskHandle, 0x00000001U);
-    } */
+  if (hspi->Instance == SPI1) {
+    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000010U);
   }
-}
-
-static void SPI1_FlushRx(void)
-{
-  #if (SPI1_DATA_SIZE == SPI_DATASIZE_8BIT)
-    volatile uint8_t dummy;
-    volatile uint8_t * dummyptr = &dummy;
-
-    while (__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_RXNE))
-    {
-        *(uint8_t *)dummyptr = *((__IO uint8_t *)&hspi1.Instance->DR);
-        dummyptr = NULL;
-        dummy = 0;
-    }
-  #elif (SPI1_DATA_SIZE == SPI_DATASIZE_16BIT)
-    volatile uint16_t dummy;
-    volatile uint16_t * dummyptr = &dummy;
-
-    while (__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_RXNE))
-    {
-        *(dummyptr) = (uint16_t)hspi1.Instance->DR;
-        dummyptr = NULL;
-        dummy = 0;
-    }
-  #else
-    #error "Unsupported SPI1_DATA_SIZE configuration"
-  #endif
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  if (crcFailureState == CRC_Failure_Handled && GPIO_Pin == GPIO_PIN_6) {
-    // This is the GPIO pin connected to the SPI1 CS pin and we have just detected a rising edge on it (end of packet)
-    // clear any leftover bytes
-    SPI1_FlushRx();
-    // Set crcFailureState back to No_CRC_Failure to indicate that we are ready to process the next packet
-    crcFailureState = No_CRC_Failure;
-    // Send flag to spiReceiveTask indicating that the CRC failure has been handled and it can process the next buffer in the camera queue (Flag 0x00000004U)
-    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000004U);
-  }
-  else if (GPIO_Pin == PKT_SYNC_RXTX_Pin) {
-    // Send flag to spiTransmitTask indicating that the packet has been transmitted over RF (Flag 0x00000002U)
-    osThreadFlagsSet(spiTransmitTaskHandle, 0x00000002U);
+  if (GPIO_Pin == CRC_OK_Pin) {
+    // Send flag to spiTransmitTask indicating that the CRC check of the packet in the CC1200 RXFIFO is OK  (Flag 0x00000008U)
+    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000008U);
   }
 }
 
@@ -859,50 +737,106 @@ void StartDefaultTask(void *argument)
 void SPIReceiveTask(void *argument)
 {
   /* USER CODE BEGIN SPIReceiveTask */
+  
+  CC1200_SetSPIHandle(&hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin);
+  CC1200_SetUserMISOPins(SPI1_MISO_U_GPIO_Port, SPI1_MISO_U_Pin);
+
+  uint8_t headerBuffer[3];
+  
+  CC1200_Init();
+
+Reset_Receive:
+
+  // Put CC1200 in RX Mode
+  CC1200_CommandStrobe(CC1200_SIDLE);
+  CC1200_CommandStrobe(CC1200_SFRX);
+  CC1200_CommandStrobe(CC1200_SRX);
+
+  osThreadFlagsClear(0x00000008U);
+
+  uint8_t currentCamera1DoubleBuffer = 0, currentCamera2DoubleBuffer = 0;
+  uint8_t prevCamera1DoubleBuffer = 0, prevCamera2DoubleBuffer = 0;
+
+  // Wait for a buffer to be available from the SPI transmit queue
+  osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+  getSPI1 = getSPI1 + 1;
+  count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
+  uint16_t currentStartOffset = 0, prevStartOffset = 0;
+
   /* Infinite loop */
-  for(;;)
-  {
-    // Wait for a buffer to be available from the queue
-    if (osMessageQueueGet(SPI_Receive_QueueHandle, &currentCameraBuffer, NULL, osWaitForever) == osOK) {
+  for(;;){
+
+    prevCamera1DoubleBuffer = currentCamera1DoubleBuffer;
+    prevCamera2DoubleBuffer = currentCamera2DoubleBuffer; 
+    currentCamera1DoubleBuffer = 0;
+    currentCamera2DoubleBuffer = 0;
+    
+    CC1200_ReceiveHeader(&headerBuffer[0]);
+    
+    CC1200_CommandStrobe(CC1200_SRX);
+
+    if (headerBuffer[0] == 0) {
+      osMessageQueuePut(SPI_Receive_QueueHandle, &currentReceiveBuffer, 0, 0);
+      goto Reset_Receive;
+    }
+
+    if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1) & (prevCamera1DoubleBuffer == 0) & (prevCamera2DoubleBuffer == 0)) {
+      currentReceiveBuffer->buffer[currentStartOffset] = 0;
+      osMessageQueuePut(CRC_QueueHandle, &currentReceiveBuffer, 0, 0);
+      putSPI1 = putSPI1 + 1;
+      osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
       getSPI1 = getSPI1 + 1;
-      // Start SPI reception using DMA for the camera buffer
-      HAL_SPI_Receive_DMA(&hspi1, currentCameraBuffer->buffer, 1023);
-      count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
+      currentStartOffset = 0;
+      prevStartOffset = 0;
     }
 
-    // Wait until RxCpltCallback send flag that it cannot obtain a buffer from the camera queue (Flag 0x00000001U)
-    // Wait until RxCpltCallback send flag that the CRC check of a certain packet has failed    (Flag 0x00000002U)
-    uint32_t flags = osThreadFlagsWait(0x00000003U, osFlagsWaitAny, osWaitForever);
-
-    if ((flags & 0x00000001U) != 0) {
-      // Go back to waiting for a buffer from the camera queue
-      // TODO: maybe also wait for the rising edge of the GPIO pin connected to the camera's CS pin here to make sure we start receiving the next packet at the correct time
-      // TODO: remove temporary fix below:
-      while(osMessageQueueGetCount(SPI_Receive_QueueHandle) != CAMERA_DATA_BUFFER_COUNT){
-        // Yield to other tasks while waiting for the buffers to be put back into the camera queue
-        // osThreadYield();
-        osDelay(20);
-      }
-      crcFailureState = CRC_Failure_Handled;
-      osThreadFlagsWait(0x00000004U, osFlagsWaitAny, osWaitForever);
-
-    } else if ((flags & 0x00000002U) != 0) {
-      // Move all the buffers that are currently in the CRC queue back to the camera queue
-      buffer_t *crcBuffer;
-      while (osMessageQueueGet(CRC_QueueHandle, &crcBuffer, NULL, 0) == osOK) {
-        osMessageQueuePut(SPI_Receive_QueueHandle, &crcBuffer, 0, 0);
-      }
-
-      // Set crcFailureState to CRC_Failure_Handled to indicate that we have handled the CRC failure (moved all buffers back to the camera queue)
-      crcFailureState = CRC_Failure_Handled;
-
-      // Wait for rising edge of GPIO pin connected to the camera's CS pin (indicating the end of the current packet and the start of a new packet)
-      osThreadFlagsWait(0x00000004U, osFlagsWaitAny, osWaitForever);
-
-      // set flag to crcTask indicating that CRC failure has been handled and it can process the next buffer in the CRC queue (Flag 0x00000001U)
-      osThreadFlagsSet(crcTaskHandle, 0x00000001U);
-
+    if (((headerBuffer[2] & 0x80) != 0x80) & (prevCamera1DoubleBuffer | prevCamera2DoubleBuffer)) { // New camera stream packet started without finishing the previous one
+      currentStartOffset = prevStartOffset;
+      CC1200_CommandStrobe(CC1200_SIDLE);
+      CC1200_CommandStrobe(CC1200_SFRX);
+      CC1200_CommandStrobe(CC1200_SRX);
     }
+    else if ((headerBuffer[2] & 0x80) == 0x80) { // Second part of camera stream packet
+      if ((((headerBuffer[2] == 0x81) & prevCamera1DoubleBuffer) | ((headerBuffer[2] == 0x82) & prevCamera2DoubleBuffer)) 
+      & (headerBuffer[1] == currentReceiveBuffer->buffer[currentStartOffset-CC1200_TX_FIFO_SIZE])) {
+        if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset, headerBuffer[0]) == 1){
+          currentStartOffset = prevStartOffset; // Discard the first part of the camera stream packet
+        } else {
+        prevStartOffset = currentStartOffset;
+        currentStartOffset += headerBuffer[0]; // Rest of payload + 2byte CRC RSSI
+        }
+      } else {
+          CC1200_CommandStrobe(CC1200_SIDLE);
+          CC1200_CommandStrobe(CC1200_SFRX);
+          CC1200_CommandStrobe(CC1200_SRX);
+          currentStartOffset = prevStartOffset; // Discard the first part of the camera stream packet
+      }
+    } else if (headerBuffer[1] > CC1200_TX_FIFO_SIZE) {
+
+      if (headerBuffer[2] == 0x01) {
+        currentCamera1DoubleBuffer = 1;
+      } else if (headerBuffer[2] == 0x02) {
+        currentCamera2DoubleBuffer = 1;
+      }
+      
+      currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
+      currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
+      if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]) == 0){
+        prevStartOffset = currentStartOffset;
+        currentStartOffset += headerBuffer[0]; // Payload (Packet Length + ID + DATA)
+      }
+      
+    } else { //Sensor Data or Single Camera Data Buffer
+      currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
+      currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
+      if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]) == 0){
+      prevStartOffset = currentStartOffset;
+      currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA) + 2byte CRC RSSI
+      }
+    }
+
+    count4 += 1;
+
   }
   /* USER CODE END SPIReceiveTask */
 }
@@ -930,7 +864,7 @@ void CRCTask(void *argument)
       for(;;){
         uint8_t subPacketLength = currentCRCBuffer->buffer[currentStartOffset];
 
-       lastPacketFlg = currentCRCBuffer->buffer[currentStartOffset + currentCRCBuffer->buffer[currentStartOffset]] == 0 ? 1 : 0;
+        lastPacketFlg = currentCRCBuffer->buffer[currentStartOffset + currentCRCBuffer->buffer[currentStartOffset] + 2] == 0 ? 1 : 0;
 
         if (subPacketLength%4 != 0){
           goto skip_crc_calculation;
@@ -944,6 +878,8 @@ void CRCTask(void *argument)
             (currentCRCBuffer->buffer[currentStartOffset + subPacketLength - 2] << 8)  |
             (currentCRCBuffer->buffer[currentStartOffset + subPacketLength - 1]);
 
+        count6 = count6 + 1;
+
         if ((calculated_crc == received_crc) && lastPacketFlg == 1) {
           // CRC is correct, put the buffer into the SPI transmit queue
           osMessageQueuePut(SPI_Transmit_QueueHandle, &currentCRCBuffer, 0, 0);
@@ -953,14 +889,14 @@ void CRCTask(void *argument)
 skip_crc_calculation:
           // CRC is incorrect, set crcFailureState to CRC_Failure to indicate that a CRC failure has occurred
           osMessageQueuePut(SPI_Receive_QueueHandle, &currentCRCBuffer, 0, 0);
-          crcFailureState = CRC_Failure;
-          // Wait until failure is handled in spiReceiveTask before processing the next buffer in the CRC queue
-          osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
+          // crcFailureState = CRC_Failure;
+          // // Wait until failure is handled in spiReceiveTask before processing the next buffer in the CRC queue
+          // osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
           count5 = count5 + 1;
           break;
         }
 
-        currentStartOffset += subPacketLength;
+        currentStartOffset += subPacketLength + 2; // Skip the 2 byte CRC and RSSI from the CC1200
       }
       currentCRCBuffer = NULL;
     }
@@ -979,11 +915,6 @@ void SPITransmitTask(void *argument)
 {
   /* USER CODE BEGIN SPITransmitTask */
 
-  CC1200_SetSPIHandle(&hspi2, SPI2_NSS_GPIO_Port, SPI2_NSS_Pin);
-  CC1200_SetUserMISOPins(SPI2_MISO_U_GPIO_Port, SPI2_MISO_U_Pin);
-  
-  CC1200_Init();
-
   /* Infinite loop */
   for(;;)
   {
@@ -991,39 +922,35 @@ void SPITransmitTask(void *argument)
     if (osMessageQueueGet(SPI_Transmit_QueueHandle, &currentTransmitBuffer, NULL, osWaitForever) == osOK) {
       getSPI2 = getSPI2 + 1;
       count3 = osMessageQueueGetCount(SPI_Transmit_QueueHandle);
-      uint16_t currentStartOffset = 0;
-      uint8_t lastPacketFlg = 0;
-      for(;;){
-        // The length of the data to be transmitted is the first byte of the buffer, so we read that byte to determine how many bytes to transmit
-        uint8_t subPacketLength = currentTransmitBuffer->buffer[currentStartOffset];
+      // uint16_t currentStartOffset = 0;
+      // uint8_t lastPacketFlg = 0;
+      // for(;;){
+      //   // The length of the data to be transmitted is the first byte of the buffer, so we read that byte to determine how many bytes to transmit
+      //   uint8_t subPacketLength = currentTransmitBuffer->buffer[currentStartOffset];
 
-        lastPacketFlg = currentTransmitBuffer->buffer[currentStartOffset + currentTransmitBuffer->buffer[currentStartOffset]] == 0 ? 1 : 0;
+      //   lastPacketFlg = currentTransmitBuffer->buffer[currentStartOffset + currentTransmitBuffer->buffer[currentStartOffset]] == 0 ? 1 : 0;
         
-        if (subPacketLength > CC1200_TX_FIFO_SIZE) {
-          CC1200_SplitAndTransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
-          count4 = count4 + 2;
-        } else {
-          CC1200_TransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
-          count4 = count4 + 1;
-        }
+      //   if (subPacketLength > CC1200_TX_FIFO_SIZE) {
+      //     CC1200_SplitAndTransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
+      //     count4 = count4 + 2;
+      //   } else {
+      //     CC1200_TransmitPacket(currentTransmitBuffer->buffer + currentStartOffset, subPacketLength);
+      //     count4 = count4 + 1;
+      //   }
 
-        // Wait for flag from GPIO callback indicating that the packet has been transmitted over RF (Flag 0x00000002U)
-        osThreadFlagsWait(0x00000002U, osFlagsWaitAny, osWaitForever);
+      //   // Wait for flag from GPIO callback indicating that the packet has been transmitted over RF (Flag 0x00000002U)
+      //   osThreadFlagsWait(0x00000002U, osFlagsWaitAny, osWaitForever);
 
-        if (lastPacketFlg == 1) {
-          break;
-        }
+      //   if (lastPacketFlg == 1) {
+      //     break;
+      //   }
 
-        currentStartOffset += subPacketLength;
-      }
+      //   currentStartOffset += subPacketLength;
+      // }
 
       // We can now put it back into the the SPI or CAN receive queue depending on its type
-      if (currentTransmitBuffer->type == Camera_Data) {
-        osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
-        putSPI2 = putSPI2 + 1;
-      } else if (currentTransmitBuffer->type == Sensor_Data) {
-        osMessageQueuePut(CAN_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
-      }
+      osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
+      putSPI2 = putSPI2 + 1;
     
       currentTransmitBuffer = NULL;
     }

@@ -49,6 +49,8 @@ uint32_t UserMisoPin;
 
 uint8_t current_state = 0;
 
+uint8_t emptyBuffer[128] = {0}; // Buffer filled with zeros that can be used for transmitting empty packets when needed
+
 /* Private function prototypes -----------------------------------------------*/
 
 void CC1200_Reset(void);
@@ -253,115 +255,95 @@ try_again:
             if (amount_transmitted == amount_to_transmit) {
                 CC1200_GetTXFIFOSpace();
                 CC1200_CommandStrobe(CC1200_STX); // Strobe the TX command to start transmission of the packet in the TX FIFO
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
-                // CC1200_CommandStrobe(CC1200_SNOP);
             }
 
         }
     }
 }
 
-void CC1200_ReceivePacket(uint8_t *buffer) {
-    // First read the length byte to know how many bytes to read from the RX FIFO
+void CC1200_ReceiveHeader(uint8_t *buffer) {
+
+retry_RX:
+
+    // Put CC1200 in RX Mode
+    // CC1200_CommandStrobe(CC1200_SIDLE);
+    // CC1200_CommandStrobe(CC1200_SFRX);
+    
+    osThreadFlagsClear(0x00000008U);
+    
+    // CC1200_CommandStrobe(CC1200_SRX);
+
+    // Wait until HAL_GPIO_EXTI_Callback send flag that the CRC check of the packet in the CC1200 RXFIFO is OK  (Flag 0x00000008U)
+    osThreadFlagsWait(0x00000008U, osFlagsWaitAny, osWaitForever);
+
+    // CC1200_CommandStrobe(CC1200_SNOP);
+
+    // while (((current_state & CC1200_STATUS_STATE_Msk) == CC1200_STATUS_STATE_RX) | 
+    // ((current_state & CC1200_STATUS_STATE_Msk) == CC1200_STATUS_STATE_CALIBRATE) | 
+    // ((current_state & CC1200_STATUS_STATE_Msk) == CC1200_STATUS_STATE_SETTLING)) {
+    //     // Wait until we are no longer in the RX state before trying to receive
+    //     CC1200_CommandStrobe(CC1200_SNOP);
+    
+    // }
+
+    // Receive header (Variable Length of CC1200 packet + Length of full camera/sensor packet + Source ID) of the packet in the CC1200 RXFIFO
     uint8_t cmd, ret;
     cmd = CC1200_BURST_READ | CC1200_RXFIFO; // Burst read command for RX FIFO
+
+    HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_RESET);  // Reset NSS pin to start the transaction
+
+    while (HAL_GPIO_ReadPin(UserMisoPort, UserMisoPin) == GPIO_PIN_SET);
+
     HAL_SPI_TransmitReceive(hspi, &cmd, &ret, 1, HAL_MAX_DELAY);
 
     if ((ret & CC1200_STATUS_STATE_Msk) == CC1200_STATUS_STATE_RXFIFO_ERR) {
-        // If we get an RX FIFO error, we need to flush the RX FIFO before we can continue receiving
+        HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);  // Set NSS high to end the transaction
+
+        // Flush and put CC1200 in RX Mode
+        CC1200_CommandStrobe(CC1200_SIDLE);
         CC1200_CommandStrobe(CC1200_SFRX);
-        return; // After flushing the RX FIFO, we can return and wait for the next packet to be received
+        
+        osThreadFlagsClear(0x00000008U);
+        
+        CC1200_CommandStrobe(CC1200_SRX);
+
+        goto retry_RX; // After flushing the RX FIFO, we can goto begin of function and wait for the next packet to be received
     }
 
-    uint8_t length;
-    HAL_SPI_TransmitReceive(hspi, &cmd, &length, 1, HAL_MAX_DELAY); // Read the length byte
+    HAL_SPI_TransmitReceive(hspi, &emptyBuffer[0], buffer, 3, HAL_MAX_DELAY); // Read the header bytes
 
-    if (length > 0) {
-        uint8_t ret[length];
-        HAL_SPI_TransmitReceive(hspi, &cmd, ret, length, HAL_MAX_DELAY); // Read the rest of the packet based on the length byte
-        for (uint8_t i = 0; i < length; i++) {
-            buffer[i] = ret[i]; // Copy the received data into the provided buffer
-        }
+    HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);  // Set NSS pin to start the transaction
+}
+
+uint8_t CC1200_ReceivePayload(uint8_t *buffer, uint8_t length) {
+    // First read the length byte to know how many bytes to read from the RX FIFO
+    uint8_t cmd, ret;
+    cmd = CC1200_BURST_READ | CC1200_RXFIFO; // Burst read command for RX FIFO
+
+    HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_RESET);  // Reset NSS pin to start the transaction
+
+    while (HAL_GPIO_ReadPin(UserMisoPort, UserMisoPin) == GPIO_PIN_SET);
+
+    HAL_SPI_TransmitReceive(hspi, &cmd, &ret, 1, HAL_MAX_DELAY);
+
+    if ((ret & CC1200_STATUS_STATE_Msk) == CC1200_STATUS_STATE_RXFIFO_ERR) {
+        HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);  // Set NSS high to end the transaction
+        // If we get an RX FIFO error, we need to flush the RX FIFO
+        CC1200_CommandStrobe(CC1200_SIDLE);
+        CC1200_CommandStrobe(CC1200_SFRX);
+        CC1200_CommandStrobe(CC1200_SRX);
+        return 1; // RX FIFO Error
     }
+
+    // Then send the data to be transmitted
+    HAL_SPI_TransmitReceive_DMA(hspi, &emptyBuffer[0], buffer, length);
+
+    // Wait until HAL_SPI_RxCpltCallback send flag that the DMA transfer is completed    (Flag 0x00000010U)
+    osThreadFlagsWait(0x00000010U, osFlagsWaitAny, osWaitForever);
+
+    HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);  // Set NSS high to end the transaction
+
+    return 0;
 }
 
 /* Private Functions */

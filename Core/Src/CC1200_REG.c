@@ -26,6 +26,7 @@
 #include "CC1200_REG.h"
 
 const CC1200_reg_t CC1200_cfg[] = {
+{0x0000,0x07},    //IOCFG3            (GPIO3 IO Pin Configuration)
 {0x0001,0x06},    //IOCFG2            (GPIO2 IO Pin Configuration)
 {0x0008,0xA8},    //SYNC_CFG1         (Sync Word Detection Configuration Reg. 1)
 {0x000A,0x47},    //DEVIATION_M       (Frequency Deviation Configuration)
@@ -36,16 +37,16 @@ const CC1200_reg_t CC1200_cfg[] = {
 {0x0010,0x01},    //CHAN_BW           (Channel Filter Configuration)
 {0x0011,0x42},    //MDMCFG1           (General Modem Parameter Configuration Reg. 1)
 {0x0012,0x05},    //MDMCFG0           (General Modem Parameter Configuration Reg. 0)
-{0x0013,0xC9},    //SYMBOL_RATE2      (Symbol Rate Configuration Exponent and Mantissa [1..)
+{0x0013,0xB9},    //SYMBOL_RATE2      (Symbol Rate Configuration Exponent and Mantissa [1..)
 {0x0014,0x99},    //SYMBOL_RATE1      (Symbol Rate Configuration Mantissa [15:8])
-{0x0015,0x99},    //SYMBOL_RATE0      (Symbol Rate Configuration Mantissa [7:0])
+{0x0015,0x9A},    //SYMBOL_RATE0      (Symbol Rate Configuration Mantissa [7:0])
 {0x0016,0x2F},    //AGC_REF           (AGC Reference Level Configuration)
 {0x0017,0xF8},    //AGC_CS_THR        (Carrier Sense Threshold Configuration)
 {0x001A,0x60},    //AGC_CFG2          (Automatic Gain Control Configuration Reg. 2)
 {0x001B,0x12},    //AGC_CFG1          (Automatic Gain Control Configuration Reg. 1)
 {0x001C,0x84},    //AGC_CFG0          (Automatic Gain Control Configuration Reg. 0)
-{0x001D,0x00},    //FIFO_CFG          (FIFO Configuration)
-{0x001F,0x1B},    //Frequency Synthesizer Calibration and Settling Con..
+{0x001D,0x80},    //FIFO_CFG          (FIFO Configuration)
+//{0x001F,0x1B},    //Frequency Synthesizer Calibration and Settling Con..
 {0x0020,0x12},    //FS_CFG            (Frequency Synthesizer Configuration)
 {0x0026,0x00},    //PKT_CFG2          (Packet Configuration Reg. 2)
 {0x0027,0x03},    //PKT_CFG1          (Packet Configuration Reg. 1) //DISABLE CRC
