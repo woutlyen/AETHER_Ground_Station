@@ -935,11 +935,10 @@ void SPITransmitTask(void *argument)
 
       // Pulse the SPI2_INT_Pin to indicate to the receiving device that a new buffer is being transmitted
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_SET);
-      osDelay(1); // Keep the pin high for 1ms
-      HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
 
       // Wait for the transmission to complete by waiting for the flag set in the HAL_SPI_TxCpltCallback callback function
       osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
+      HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
 
       // We can now put it back into the the SPI or CAN receive queue depending on its type
       osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
