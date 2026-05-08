@@ -59,6 +59,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define USER_Btn_Pin GPIO_PIN_13
 #define USER_Btn_GPIO_Port GPIOC
+#define USER_Btn_EXTI_IRQn EXTI15_10_IRQn
 #define MCO_Pin GPIO_PIN_0
 #define MCO_GPIO_Port GPIOH
 #define SPI1_MISO_U_Pin GPIO_PIN_0
@@ -82,6 +83,12 @@ void Error_Handler(void);
 #define CRC_OK_EXTI_IRQn EXTI1_IRQn
 #define SPI2_INT_Pin GPIO_PIN_2
 #define SPI2_INT_GPIO_Port GPIOB
+#define PKT_SYNC_RXTX_Pin GPIO_PIN_14
+#define PKT_SYNC_RXTX_GPIO_Port GPIOE
+#define PKT_SYNC_RXTX_EXTI_IRQn EXTI15_10_IRQn
+#define RXFIFO_THR_Pin GPIO_PIN_15
+#define RXFIFO_THR_GPIO_Port GPIOE
+#define RXFIFO_THR_EXTI_IRQn EXTI15_10_IRQn
 #define RMII_TXD1_Pin GPIO_PIN_13
 #define RMII_TXD1_GPIO_Port GPIOB
 #define LD3_Pin GPIO_PIN_14

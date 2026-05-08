@@ -28,6 +28,7 @@
 const CC1200_reg_t CC1200_cfg[] = {
 {0x0000,0x07},    //IOCFG3            (GPIO3 IO Pin Configuration)
 {0x0001,0x06},    //IOCFG2            (GPIO2 IO Pin Configuration)
+{0x0003,0x00},    //IOCFG0            (GPIO0 IO Pin Configuration)
 {0x0008,0xA8},    //SYNC_CFG1         (Sync Word Detection Configuration Reg. 1)
 {0x000A,0x47},    //DEVIATION_M       (Frequency Deviation Configuration)
 {0x000B,0x2F},    //MODCFG_DEV_E      (Modulation Format and Frequency Deviation Configur..)
@@ -45,7 +46,7 @@ const CC1200_reg_t CC1200_cfg[] = {
 {0x001A,0x60},    //AGC_CFG2          (Automatic Gain Control Configuration Reg. 2)
 {0x001B,0x12},    //AGC_CFG1          (Automatic Gain Control Configuration Reg. 1)
 {0x001C,0x84},    //AGC_CFG0          (Automatic Gain Control Configuration Reg. 0)
-{0x001D,0x80},    //FIFO_CFG          (FIFO Configuration)
+{0x001D,0x40},    //FIFO_CFG          (FIFO Configuration)
 //{0x001F,0x1B},    //Frequency Synthesizer Calibration and Settling Con..
 {0x0020,0x12},    //FS_CFG            (Frequency Synthesizer Configuration)
 {0x0026,0x00},    //PKT_CFG2          (Packet Configuration Reg. 2)

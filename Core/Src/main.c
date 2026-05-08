@@ -126,7 +126,7 @@ const osMessageQueueAttr_t SPI_Transmit_Queue_attributes = {
 /* USER CODE BEGIN PV */
 Pkt_Phase Phase = Length_Byte; // Start with expecting the length byte
 
-volatile uint32_t count, count2, count3, count4, count5, count6 = 0;
+volatile uint32_t count, count2, count3, count4, count5, count6, count7 = 0;
 volatile uint32_t getSPI1, putSPI1, getCRC, putCRC, getSPI2, putSPI2 = 0;
 
 static buffer_t *currentReceiveBuffer = NULL;
@@ -552,6 +552,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
@@ -618,6 +619,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(CRC_OK_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PKT_SYNC_RXTX_Pin */
+  GPIO_InitStruct.Pin = PKT_SYNC_RXTX_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(PKT_SYNC_RXTX_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RXFIFO_THR_Pin */
+  GPIO_InitStruct.Pin = RXFIFO_THR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(RXFIFO_THR_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : RMII_TXD1_Pin */
   GPIO_InitStruct.Pin = RMII_TXD1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -662,6 +675,9 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
@@ -681,9 +697,17 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  if (GPIO_Pin == CRC_OK_Pin) {
-    // Send flag to spiTransmitTask indicating that the CRC check of the packet in the CC1200 RXFIFO is OK  (Flag 0x00000008U)
-    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000008U);
+  if (GPIO_Pin == RXFIFO_THR_Pin) {
+    // Send flag to spiReceiveTask indicating that the RX FIFO threshold has been reached (Flag 0x00000020U)
+    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000020U);
+  } else if (GPIO_Pin == PKT_SYNC_RXTX_Pin) {
+    if (HAL_GPIO_ReadPin(PKT_SYNC_RXTX_GPIO_Port, PKT_SYNC_RXTX_Pin) == GPIO_PIN_SET) {
+      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to HIGH (Flag 0x00000040U)
+      osThreadFlagsSet(spiReceiveTaskHandle, 0x00000040U);
+    } else {
+      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to LOW (Flag 0x00000080U)
+      osThreadFlagsSet(spiReceiveTaskHandle, 0x00000080U);
+    }
   }
 }
 
@@ -754,95 +778,41 @@ void SPIReceiveTask(void *argument)
 
 Reset_Receive:
 
+  // Wait for a buffer to be available from the SPI transmit queue
+  osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+  getSPI1 = getSPI1 + 1;
+  count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
+  uint16_t currentStartOffset = 0;
+
   // Put CC1200 in RX Mode
   CC1200_CommandStrobe(CC1200_SIDLE);
   CC1200_CommandStrobe(CC1200_SFRX);
   CC1200_CommandStrobe(CC1200_SRX);
 
-  osThreadFlagsClear(0x00000008U);
-
-  uint8_t currentCamera1DoubleBuffer = 0, currentCamera2DoubleBuffer = 0;
-  uint8_t prevCamera1DoubleBuffer = 0, prevCamera2DoubleBuffer = 0;
-
-  // Wait for a buffer to be available from the SPI transmit queue
-  osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
-  getSPI1 = getSPI1 + 1;
-  count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
-  uint16_t currentStartOffset = 0, prevStartOffset = 0;
-
   /* Infinite loop */
   for(;;){
-
-    prevCamera1DoubleBuffer = currentCamera1DoubleBuffer;
-    prevCamera2DoubleBuffer = currentCamera2DoubleBuffer; 
-    currentCamera1DoubleBuffer = 0;
-    currentCamera2DoubleBuffer = 0;
     
     CC1200_ReceiveHeader(&headerBuffer[0]);
-    
-    CC1200_CommandStrobe(CC1200_SRX);
 
-    if (headerBuffer[0] == 0) {
-      osMessageQueuePut(SPI_Receive_QueueHandle, &currentReceiveBuffer, 0, 0);
-      goto Reset_Receive;
-    }
-
-    if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1) & (prevCamera1DoubleBuffer == 0) & (prevCamera2DoubleBuffer == 0)) {
+    if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1)) {
       currentReceiveBuffer->buffer[currentStartOffset] = 0;
       osMessageQueuePut(CRC_QueueHandle, &currentReceiveBuffer, 0, 0);
       putSPI1 = putSPI1 + 1;
       osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
       getSPI1 = getSPI1 + 1;
       currentStartOffset = 0;
-      prevStartOffset = 0;
     }
 
-    if (((headerBuffer[2] & 0x80) != 0x80) & (prevCamera1DoubleBuffer | prevCamera2DoubleBuffer)) { // New camera stream packet started without finishing the previous one
-      currentStartOffset = prevStartOffset;
-      CC1200_CommandStrobe(CC1200_SIDLE);
-      CC1200_CommandStrobe(CC1200_SFRX);
-      CC1200_CommandStrobe(CC1200_SRX);
-    }
-    else if ((headerBuffer[2] & 0x80) == 0x80) { // Second part of camera stream packet
-      if ((((headerBuffer[2] == 0x81) & prevCamera1DoubleBuffer) | ((headerBuffer[2] == 0x82) & prevCamera2DoubleBuffer)) 
-      & (headerBuffer[1] == currentReceiveBuffer->buffer[currentStartOffset-CC1200_TX_FIFO_SIZE])) {
-        if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset, headerBuffer[0]) == 1){
-          currentStartOffset = prevStartOffset; // Discard the first part of the camera stream packet
-        } else {
-        prevStartOffset = currentStartOffset;
-        currentStartOffset += headerBuffer[0]; // Rest of payload + 2byte CRC RSSI
-        }
-      } else {
-          CC1200_CommandStrobe(CC1200_SIDLE);
-          CC1200_CommandStrobe(CC1200_SFRX);
-          CC1200_CommandStrobe(CC1200_SRX);
-          currentStartOffset = prevStartOffset; // Discard the first part of the camera stream packet
-      }
-    } else if (headerBuffer[1] > CC1200_TX_FIFO_SIZE) {
-
-      if (headerBuffer[2] == 0x01) {
-        currentCamera1DoubleBuffer = 1;
-      } else if (headerBuffer[2] == 0x02) {
-        currentCamera2DoubleBuffer = 1;
-      }
-      
-      currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
-      currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
-      if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]) == 0){
-        prevStartOffset = currentStartOffset;
-        currentStartOffset += headerBuffer[0]; // Payload (Packet Length + ID + DATA)
-      }
-      
-    } else { //Sensor Data or Single Camera Data Buffer
-      currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
-      currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
-      if(CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]) == 0){
-      prevStartOffset = currentStartOffset;
+    currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
+    currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
+    uint8_t payloadReceived = CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]);
+    if(payloadReceived == 0){
       currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA) + 2byte CRC RSSI
-      }
+      count4 += 1;
+      CC1200_CommandStrobe(CC1200_SRX);
+    } else {
+      count7 += 1;
     }
-
-    count4 += 1;
 
   }
   /* USER CODE END SPIReceiveTask */
