@@ -33,17 +33,6 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef enum {
-  Length_Byte,
-  Data_Bytes
-} Pkt_Phase;
-
-typedef enum {
-  No_CRC_Failure,
-  CRC_Failure,
-  CRC_Failure_Handled
-} CRC_Failure_State;
-
-typedef enum {
   Camera_Data,
   Sensor_Data
 } Buffer_Type;
@@ -124,17 +113,12 @@ const osMessageQueueAttr_t SPI_Transmit_Queue_attributes = {
   .name = "SPI_Transmit_Queue"
 };
 /* USER CODE BEGIN PV */
-Pkt_Phase Phase = Length_Byte; // Start with expecting the length byte
-
 volatile uint32_t count, count2, count3, count4, count5, count6, count7 = 0;
 volatile uint32_t getSPI1, putSPI1, getCRC, putCRC, getSPI2, putSPI2 = 0;
 
 static buffer_t *currentReceiveBuffer = NULL;
-static buffer_t *prevReceiveBuffer = NULL;
 static buffer_t *currentCRCBuffer = NULL;
 static buffer_t *currentTransmitBuffer = NULL;
-
-static CRC_Failure_State crcFailureState = No_CRC_Failure; // Flag to indicate the state of the last CRC check
 
 static buffer_t dataBuffers[DATA_BUFFER_COUNT];
 
@@ -684,18 +668,36 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  SPI transmit receive complete callback.
+  * @param  hspi: SPI handle
+  * @retval None
+  */
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi){
   if (hspi->Instance == SPI1) {
+    // Send flag to spiReceiveTask indicating that the SPI1 transaction is complete (Flag 0x00000010U)
     osThreadFlagsSet(spiReceiveTaskHandle, 0x00000010U);
   }
 }
 
+/**
+  * @brief  SPI transmit complete callback.
+  * @param  hspi: SPI handle
+  * @retval None
+  */
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
   if (hspi->Instance == SPI2) {
+    // Send flag to spiTransmitTask indicating that the SPI2 transmission is complete (Flag 0x00000001U)
     osThreadFlagsSet(spiTransmitTaskHandle, 0x00000001U);
   }
 }
 
+/**
+  * @brief  GPIO EXTI callback.
+  * @param  GPIO_Pin: GPIO pin
+  * @retval None
+  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   if (GPIO_Pin == RXFIFO_THR_Pin) {
     // Send flag to spiReceiveTask indicating that the RX FIFO threshold has been reached (Flag 0x00000020U)
@@ -711,6 +713,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   }
 }
 
+/**
+  * @brief  Calculate CRC.
+  * @param  data: Pointer to the data for which to calculate the CRC.
+  * @param  length: Length of the data.
+  * @retval None
+  */
 uint32_t Calculate_CRC(uint8_t *data, uint16_t length)
 {
     uint32_t crc;
@@ -776,8 +784,6 @@ void SPIReceiveTask(void *argument)
   
   CC1200_Init();
 
-Reset_Receive:
-
   // Wait for a buffer to be available from the SPI transmit queue
   osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
   getSPI1 = getSPI1 + 1;
@@ -807,7 +813,7 @@ Reset_Receive:
     currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
     uint8_t payloadReceived = CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]);
     if(payloadReceived == 0){
-      currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA) + 2byte CRC RSSI
+      currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
       count4 += 1;
       CC1200_CommandStrobe(CC1200_SRX);
     } else {
@@ -839,8 +845,10 @@ void CRCTask(void *argument)
       uint16_t currentStartOffset = 0;
       uint8_t lastPacketFlg = 0;
       for(;;){
+        // The length of the data to be processed is the first byte of the buffer, so we read that byte to determine how many bytes to process
         uint8_t subPacketLength = currentCRCBuffer->buffer[currentStartOffset];
 
+        // The last packet flag is determined by checking if the byte at the position of the length byte plus the length of the data is 0 (indicating that there are no more packets after this one)
         lastPacketFlg = currentCRCBuffer->buffer[currentStartOffset + currentCRCBuffer->buffer[currentStartOffset] + 2] == 0 ? 1 : 0;
 
         if (subPacketLength%4 != 0){
@@ -864,11 +872,8 @@ void CRCTask(void *argument)
           break;
         } else if (calculated_crc != received_crc) {
 skip_crc_calculation:
-          // CRC is incorrect, set crcFailureState to CRC_Failure to indicate that a CRC failure has occurred
+          // CRC is incorrect, put the buffer back into the SPI receive queue to be reprocessed
           osMessageQueuePut(SPI_Receive_QueueHandle, &currentCRCBuffer, 0, 0);
-          // crcFailureState = CRC_Failure;
-          // // Wait until failure is handled in spiReceiveTask before processing the next buffer in the CRC queue
-          // osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
           count5 = count5 + 1;
           break;
         }
@@ -903,14 +908,16 @@ void SPITransmitTask(void *argument)
       // Transmit the buffer over SPI2 using DMA
       HAL_SPI_Transmit_DMA(&hspi2, currentTransmitBuffer->buffer, 1024);
 
-      // Pulse the SPI2_INT_Pin to indicate to the receiving device that a new buffer is being transmitted
+      // Set the SPI2_INT_Pin to indicate to the receiving device that a new buffer is being transmitted
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_SET);
 
       // Wait for the transmission to complete by waiting for the flag set in the HAL_SPI_TxCpltCallback callback function
       osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
+
+      // Reset the SPI2_INT_Pin to indicate that the transmission is complete
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
 
-      // We can now put it back into the the SPI or CAN receive queue depending on its type
+      // We can now put it back into the the SPI receive queue to be reused for receiving new data from the CC1200
       osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
       putSPI2 = putSPI2 + 1;
     
