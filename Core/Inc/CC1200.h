@@ -92,7 +92,6 @@ void CC1200_Init(void);
 
 void CC1200_CommandStrobe(uint8_t strobe);
 
-void CC1200_SplitAndTransmitPacket(uint8_t *data, uint8_t length);
 void CC1200_TransmitPacket(uint8_t *data, uint8_t length);
 
 void CC1200_ReceiveHeader(uint8_t *buffer);

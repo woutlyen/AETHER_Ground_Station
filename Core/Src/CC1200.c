@@ -24,17 +24,6 @@
 
 /* Private typedef -----------------------------------------------------------*/
 
-typedef enum {
-    auto_NSS_release,
-    manual_NSS_release
-} NSS_Release_Mode;
-
-typedef enum {
-    StartOfPacket,
-    EndOfPacket,
-    Error
-} Packet_Position;
-
 /* Private define ------------------------------------------------------------*/
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,17 +59,34 @@ uint8_t CC1200_GetRXFIFOLength(void);
 
 /* Private user code --------------------------------------------------------- */
 
+/**
+  * @brief  Sets the SPI handle and GPIO pins for the CC1200
+  * @param  hspi_handle: Pointer to the SPI handle
+  * @param  cs_port: Pointer to the GPIO port for the chip select pin
+  * @param  cs_pin: The chip select pin
+  * @retval None
+  */
 void CC1200_SetSPIHandle(SPI_HandleTypeDef *hspi_handle, GPIO_TypeDef *cs_port, uint32_t cs_pin) {
     hspi = hspi_handle;
     CSPort = cs_port;
     CSPin = cs_pin;
 }
 
+/**
+  * @brief  Sets the GPIO pins for the User MISO line
+  * @param  miso_port: Pointer to the GPIO port for the MISO pin
+  * @param  miso_pin: The MISO pin
+  * @retval None
+  */
 void CC1200_SetUserMISOPins(GPIO_TypeDef *miso_port, uint32_t miso_pin) {
     UserMisoPort = miso_port;
     UserMisoPin = miso_pin;
 }
 
+/**
+  * @brief  Initializes the CC1200
+  * @retval None
+  */
 void CC1200_Init(void) {
     // Reset the CC1200
     CC1200_Reset();
@@ -93,6 +99,11 @@ void CC1200_Init(void) {
     CC1200_ReadAllRegisters(); // Read back all registers to verify that they have been set correctly
 }
 
+/**
+  * @brief  Sends a command strobe to the CC1200
+  * @param  strobe: The strobe command to send
+  * @retval None
+  */
 void CC1200_CommandStrobe(uint8_t strobe) {
     if ((strobe > CC1200_SNOP) || (strobe < CC1200_SRES)) {
         // Invalid strobe command
@@ -114,49 +125,20 @@ void CC1200_CommandStrobe(uint8_t strobe) {
     current_state = rx_buf; // & CC1200_STATUS_STATE_Msk; // Update current state based on status byte
 }
 
+/**
+  * @brief  Gets the current state of the CC1200
+  * @retval The current state
+  */
 uint8_t CC1200_GetState(void) {
     return current_state;
 }
 
-void CC1200_SplitAndTransmitPacket(uint8_t *data, uint8_t length){
-    Packet_Position packet_position = StartOfPacket;
-    uint8_t bytes_transmitted = 0;
-    
-    for (;;) {
-        uint8_t chunk_size = (length - bytes_transmitted) > CC1200_TX_FIFO_SIZE ? CC1200_TX_FIFO_SIZE : (length - bytes_transmitted);
-        if (packet_position == StartOfPacket) {
-            CC1200_TransmitPacket(data, chunk_size);
-            bytes_transmitted += chunk_size;
-            packet_position = EndOfPacket; // After transmitting the first chunk, we will be at the end of the packet
-
-            // Wait for flag from GPIO callback indicating that the packet has been transmitted over RF (Flag 0x00000002U)
-            osThreadFlagsWait(0x00000002U, osFlagsWaitAny, osWaitForever);
-
-        } else if (packet_position == EndOfPacket) {
-            data[bytes_transmitted-2] = data[0];        // Add length byte at the beginning of the next chunk
-            data[bytes_transmitted-1] = data[1] | 0x80; // Set the MSB bit for the next chunk, indicating EndOfPacket
-            CC1200_TransmitPacket(data + bytes_transmitted-2, chunk_size+2);
-            bytes_transmitted += chunk_size;
-
-            if (bytes_transmitted < length) {
-                // If we still have more data to transmit after this chunk, but we have already marked this chunk as EndOfPacket, 
-                // then we have an error because we cannot transmit more than 2 chunks for a single packet.
-                packet_position = Error;             
-            }
-            else {
-                // We have transmitted all data, and the last chunk is correctly marked as EndOfPacket, so we can exit the loop
-                break;
-            }
-        } else {
-            // We have an error because we cannot transmit more than 2 chunks for a single packet.
-            break;
-        }
-
-        // for(uint16_t i = 0; i < 4000; i++);
-
-    }
-}
-
+/**
+  * @brief  Transmits a packet using the CC1200
+  * @param  data: Pointer to the data to transmit
+  * @param  length: The length of the data to transmit
+  * @retval None
+  */
 void CC1200_TransmitPacket(uint8_t *data, uint8_t length) {
 
     CC1200_CommandStrobe(CC1200_SNOP);
@@ -185,7 +167,7 @@ try_again:
 
     while (amount_transmitted < amount_to_transmit) {
         uint8_t space = CC1200_GetTXFIFOSpace();
-        if (amount_transmitted == 0){
+        if ((amount_transmitted == 0) & (space > 0)) {
             space--;
         }
 
@@ -195,6 +177,7 @@ try_again:
             CC1200_CommandStrobe(CC1200_SFTX);
             goto try_again; // After flushing the TX FIFO, we can check the space again and try transmitting again
         }
+
         if (space > 0) {
             uint8_t diff = amount_to_transmit - amount_transmitted;
             uint8_t to_transmit = diff < space ? diff : space;
@@ -241,6 +224,10 @@ try_again:
 
             HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);  // Set NSS high to end the transaction
 
+            if (amount_transmitted == 0) {
+                CC1200_CommandStrobe(CC1200_STX); // Strobe the TX command to start transmission of the packet in the TX FIFO
+            }
+
             amount_transmitted += to_transmit;
             current_state = rx_buf[to_transmit - 1] & CC1200_STATUS_STATE_Msk; // Update current state based on status byte
 
@@ -253,15 +240,22 @@ try_again:
                 }
             }
             
-            if (amount_transmitted == amount_to_transmit) {
-                CC1200_GetTXFIFOSpace();
-                CC1200_CommandStrobe(CC1200_STX); // Strobe the TX command to start transmission of the packet in the TX FIFO
+            if (amount_transmitted < amount_to_transmit) {
+                // Wait for flag from GPIO callback indicating that the RF module is ready to transmit the next part of the packet if needed (Flag 0x00000004U)
+                osThreadFlagsWait(0x00000004U, osFlagsWaitAny, osWaitForever);
             }
 
+        } else {
+            // Wait for flag from GPIO callback indicating that the RF module is ready to transmit the next part of the packet if needed (Flag 0x00000004U)
+            osThreadFlagsWait(0x00000004U, osFlagsWaitAny, osWaitForever);
         }
     }
 }
 
+/** @brief Receive the header of a packet from the CC1200 RX FIFO
+  * @param buffer Pointer to the buffer where the header will be stored
+  * @retval None
+  */
 void CC1200_ReceiveHeader(uint8_t *buffer) {
  
 retry_RX:
@@ -316,6 +310,12 @@ retry_RX:
     }
 }
 
+
+/** @brief Receive the payload of a packet from the CC1200 RX FIFO
+  * @param buffer Pointer to the buffer where the payload will be stored
+  * @param length Length of the payload to receive
+  * @retval None
+  */
 uint8_t CC1200_ReceivePayload(uint8_t *buffer, uint8_t length) {
     
     uint8_t bytes_received = 0;
@@ -387,6 +387,10 @@ uint8_t CC1200_ReceivePayload(uint8_t *buffer, uint8_t length) {
 
 /* Private Functions */
 
+/**
+ * @brief  Resets the CC1200
+ * @retval None
+ */
 void CC1200_Reset(void) {
     // To reset the CC1200, we can strobe the SRES command
     CC1200_CommandStrobe(CC1200_SRES); // We will manually control the NSS pin for the reset sequence
@@ -399,6 +403,10 @@ void CC1200_Reset(void) {
     HAL_GPIO_WritePin(CSPort, CSPin, GPIO_PIN_SET);
 }
 
+/**
+ * @brief  Reads all registers of the CC1200
+ * @retval None
+ */
 void CC1200_ReadAllRegisters(void) {
     // This function can be used for debugging purposes to read all the registers of the CC1200 and print their values
     for (uint16_t addr = 0; addr <= CC1200_MAX_NORM_ADDR; addr++) {
@@ -409,6 +417,12 @@ void CC1200_ReadAllRegisters(void) {
     }
 }
 
+/**
+ * @brief  Writes a value to a register in the CC1200
+ * @param  addr: The address of the register to write to
+ * @param  value: The value to write
+ * @retval None
+ */
 void CC1200_WriteRegister(uint16_t addr, uint8_t value) {
     if ((addr >> 8) == CC1200_EXTENDED_ADDR) {
         // Extended register
@@ -419,6 +433,12 @@ void CC1200_WriteRegister(uint16_t addr, uint8_t value) {
     }
 }
 
+/**
+ * @brief  Writes a value to a normal register in the CC1200
+ * @param  addr: The address of the normal register to write to
+ * @param  value: The value to write
+ * @retval None
+ */
 void CC1200_WriteNormalRegister(uint16_t addr, uint8_t value) {
     if ((addr & 0xFF) > CC1200_MAX_NORM_ADDR) {
         // Invalid normal register address
@@ -439,6 +459,12 @@ void CC1200_WriteNormalRegister(uint16_t addr, uint8_t value) {
     current_state = rx_buf[1] & CC1200_STATUS_STATE_Msk; // Update current state based on status byte
 }
 
+/**
+ * @brief  Writes a value to an extended register in the CC1200
+ * @param  addr: The address of the extended register to write to
+ * @param  value: The value to write
+ * @retval None
+ */
 void CC1200_WriteExtendedRegister(uint16_t addr, uint8_t value) {
     uint8_t tx_buf[3], rx_buf[3];
     tx_buf[0] = CC1200_EXTENDED_ADDR | CC1200_SINGLE_WRITE; // Extended address flag with write flag
@@ -456,6 +482,11 @@ void CC1200_WriteExtendedRegister(uint16_t addr, uint8_t value) {
     current_state = rx_buf[2] & CC1200_STATUS_STATE_Msk;    // Update current state based on status byte
 }
 
+/**
+ * @brief  Reads a normal register in the CC1200
+ * @param  addr: The address of the normal register to read
+ * @retval The value of the register
+ */
 uint8_t CC1200_ReadNormalRegister(uint16_t addr) {
     if ((addr & 0xFF) > CC1200_MAX_NORM_ADDR) {
         // Invalid normal register address
@@ -477,6 +508,11 @@ uint8_t CC1200_ReadNormalRegister(uint16_t addr) {
     return rx_buf[1]; // The value of the register is returned in the last byte of the response
 }
 
+/**
+ * @brief  Reads an extended register in the CC1200
+ * @param  addr: The address of the extended register to read
+ * @retval The value of the register
+ */
 uint8_t CC1200_ReadExtendedRegister(uint16_t addr) {
     uint8_t tx_buf[3], rx_buf[3];
     tx_buf[0] = CC1200_EXTENDED_ADDR | CC1200_SINGLE_READ; // Extended address flag with read flag
@@ -496,6 +532,10 @@ uint8_t CC1200_ReadExtendedRegister(uint16_t addr) {
     return rx_buf[2]; // The value of the extended register is returned in the last byte of the response
 }
 
+/**
+ * @brief  Gets the available space in the TX FIFO
+ * @retval The number of bytes available in the TX FIFO
+ */
 uint8_t CC1200_GetTXFIFOSpace(void) {
     // The number of bytes in the TX FIFO is given by the NUM_TXBYTES extended register, and the FIFO size is 128 bytes, so the space available is 128 minus the number of bytes currently in the FIFO
     uint8_t num_tx_bytes = CC1200_ReadExtendedRegister(CC1200_NUM_TXBYTES); // NUM_TXBYTES register address
@@ -507,6 +547,10 @@ uint8_t CC1200_GetTXFIFOSpace(void) {
     return space;
 }
 
+/**
+ * @brief  Gets the number of bytes in the RX FIFO
+ * @retval The number of bytes in the RX FIFO
+ */
 uint8_t CC1200_GetRXFIFOLength(void) {
     // The number of bytes in the RX FIFO is given by the NUM_RXBYTES extended register
     uint8_t num_rx_bytes = CC1200_ReadExtendedRegister(CC1200_NUM_RXBYTES); // NUM_RXBYTES register address
