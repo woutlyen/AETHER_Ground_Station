@@ -1,0 +1,3 @@
+[submodule "AETHER_CC1200_Library"]
+	path = AETHER_CC1200_Library
+	url = git@github.com:woutlyen/AETHER_CC1200_Library.git
