@@ -108,20 +108,20 @@ const osThreadAttr_t spiTransmitTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal1,
 };
-/* Definitions for SPI_Receive_Queue */
-osMessageQueueId_t SPI_Receive_QueueHandle;
-const osMessageQueueAttr_t SPI_Receive_Queue_attributes = {
-  .name = "SPI_Receive_Queue"
+/* Definitions for spiReceiveQueue */
+osMessageQueueId_t spiReceiveQueueHandle;
+const osMessageQueueAttr_t spiReceiveQueue_attributes = {
+  .name = "spiReceiveQueue"
 };
-/* Definitions for CRC_Queue */
-osMessageQueueId_t CRC_QueueHandle;
-const osMessageQueueAttr_t CRC_Queue_attributes = {
-  .name = "CRC_Queue"
+/* Definitions for crcQueue */
+osMessageQueueId_t crcQueueHandle;
+const osMessageQueueAttr_t crcQueue_attributes = {
+  .name = "crcQueue"
 };
-/* Definitions for SPI_Transmit_Queue */
-osMessageQueueId_t SPI_Transmit_QueueHandle;
-const osMessageQueueAttr_t SPI_Transmit_Queue_attributes = {
-  .name = "SPI_Transmit_Queue"
+/* Definitions for spiTransmitQueue */
+osMessageQueueId_t spiTransmitQueueHandle;
+const osMessageQueueAttr_t spiTransmitQueue_attributes = {
+  .name = "spiTransmitQueue"
 };
 /* USER CODE BEGIN PV */
 volatile uint32_t count, count2, count3, count4, count5, count6, count7 = 0;
@@ -217,20 +217,20 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of SPI_Receive_Queue */
-  SPI_Receive_QueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &SPI_Receive_Queue_attributes);
+  /* creation of spiReceiveQueue */
+  spiReceiveQueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &spiReceiveQueue_attributes);
 
-  /* creation of CRC_Queue */
-  CRC_QueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &CRC_Queue_attributes);
+  /* creation of crcQueue */
+  crcQueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &crcQueue_attributes);
 
-  /* creation of SPI_Transmit_Queue */
-  SPI_Transmit_QueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &SPI_Transmit_Queue_attributes);
+  /* creation of spiTransmitQueue */
+  spiTransmitQueueHandle = osMessageQueueNew (30, sizeof(buffer_t*), &spiTransmitQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   for (int i = 0; i < DATA_BUFFER_COUNT; i++) {
     buffer_t *ptr = &dataBuffers[i];
-    osMessageQueuePut(SPI_Receive_QueueHandle, &ptr, 0, 0);
+    osMessageQueuePut(spiReceiveQueueHandle, &ptr, 0, 0);
   }
   /* USER CODE END RTOS_QUEUES */
 
@@ -769,9 +769,9 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
-    count2 = osMessageQueueGetCount(CRC_QueueHandle);
-    count3 = osMessageQueueGetCount(SPI_Transmit_QueueHandle);
+    count = osMessageQueueGetCount(spiReceiveQueueHandle);
+    count2 = osMessageQueueGetCount(crcQueueHandle);
+    count3 = osMessageQueueGetCount(spiTransmitQueueHandle);
     osDelay(1000);
   }
   /* USER CODE END 5 */
@@ -795,9 +795,9 @@ void SPIReceiveTask(void *argument)
   CC1200_Init();
 
   // Wait for a buffer to be available from the SPI transmit queue
-  osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+  osMessageQueueGet(spiReceiveQueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
   getSPI1 = getSPI1 + 1;
-  count = osMessageQueueGetCount(SPI_Receive_QueueHandle);
+  count = osMessageQueueGetCount(spiReceiveQueueHandle);
   uint16_t currentStartOffset = 0;
 
   // Put CC1200 in RX Mode
@@ -812,9 +812,9 @@ void SPIReceiveTask(void *argument)
 
     if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1)) {
       currentReceiveBuffer->buffer[currentStartOffset] = 0;
-      osMessageQueuePut(CRC_QueueHandle, &currentReceiveBuffer, 0, 0);
+      osMessageQueuePut(crcQueueHandle, &currentReceiveBuffer, 0, 0);
       putSPI1 = putSPI1 + 1;
-      osMessageQueueGet(SPI_Receive_QueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+      osMessageQueueGet(spiReceiveQueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
       getSPI1 = getSPI1 + 1;
       currentStartOffset = 0;
     }
@@ -848,10 +848,10 @@ void CRCTask(void *argument)
   for(;;)
   {
     // Wait for a buffer to be available from the CRC queue
-    if (osMessageQueueGet(CRC_QueueHandle, &currentCRCBuffer, NULL, osWaitForever) == osOK) {
+    if (osMessageQueueGet(crcQueueHandle, &currentCRCBuffer, NULL, osWaitForever) == osOK) {
       getCRC = getCRC + 1;
       // Calculate CRC for the buffer
-      count2 = osMessageQueueGetCount(CRC_QueueHandle);
+      count2 = osMessageQueueGetCount(crcQueueHandle);
       uint16_t currentStartOffset = 0;
       uint8_t lastPacketFlg = 0;
       for(;;){
@@ -877,13 +877,13 @@ void CRCTask(void *argument)
 
         if ((calculated_crc == received_crc) && lastPacketFlg == 1) {
           // CRC is correct, put the buffer into the SPI transmit queue
-          osMessageQueuePut(SPI_Transmit_QueueHandle, &currentCRCBuffer, 0, 0);
+          osMessageQueuePut(spiTransmitQueueHandle, &currentCRCBuffer, 0, 0);
           putCRC = putCRC + 1;
           break;
         } else if (calculated_crc != received_crc) {
 skip_crc_calculation:
           // CRC is incorrect, put the buffer back into the SPI receive queue to be reprocessed
-          osMessageQueuePut(SPI_Receive_QueueHandle, &currentCRCBuffer, 0, 0);
+          osMessageQueuePut(spiReceiveQueueHandle, &currentCRCBuffer, 0, 0);
           count5 = count5 + 1;
           break;
         }
@@ -911,9 +911,9 @@ void SPITransmitTask(void *argument)
   for(;;)
   {
     // Wait for a buffer to be available from the SPI transmit queue
-    if (osMessageQueueGet(SPI_Transmit_QueueHandle, &currentTransmitBuffer, NULL, osWaitForever) == osOK) {
+    if (osMessageQueueGet(spiTransmitQueueHandle, &currentTransmitBuffer, NULL, osWaitForever) == osOK) {
       getSPI2 = getSPI2 + 1;
-      count3 = osMessageQueueGetCount(SPI_Transmit_QueueHandle);
+      count3 = osMessageQueueGetCount(spiTransmitQueueHandle);
 
       // Transmit the buffer over SPI2 using DMA
       HAL_SPI_Transmit_DMA(&hspi2, currentTransmitBuffer->buffer, 1024);
@@ -928,7 +928,7 @@ void SPITransmitTask(void *argument)
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
 
       // We can now put it back into the the SPI receive queue to be reused for receiving new data from the CC1200
-      osMessageQueuePut(SPI_Receive_QueueHandle, &currentTransmitBuffer, 0, 0);
+      osMessageQueuePut(spiReceiveQueueHandle, &currentTransmitBuffer, 0, 0);
       putSPI2 = putSPI2 + 1;
     
       currentTransmitBuffer = NULL;
