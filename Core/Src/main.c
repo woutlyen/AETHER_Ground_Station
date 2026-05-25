@@ -48,6 +48,17 @@ typedef struct {
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define DATA_BUFFER_COUNT 30
+
+// spiReceiveTask flags
+#define SPI_RXTX_CPLT_FLG     0x00000001U
+#define PKT_SYNC_RXTX_RE_FLG  0x00000002U
+#define PKT_SYNC_RXTX_FE_FLG  0x00000004U
+#define RX_FIFO_THR_RE_FLG    0x00000008U
+#define TX_FIFO_THR_FE_FLG    0x00000010U
+
+// spiTransmitTask flags
+#define SPI_TX_CPLT_FLG       0x00000001U
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -676,8 +687,8 @@ static void MX_GPIO_Init(void)
   */
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi){
   if (hspi->Instance == SPI1) {
-    // Send flag to spiReceiveTask indicating that the SPI1 transaction is complete (Flag 0x00000010U)
-    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000010U);
+    // Send flag to spiReceiveTask indicating that the SPI1 transaction is complete (SPI_RXTX_CPLT_FLG)
+    osThreadFlagsSet(spiReceiveTaskHandle, SPI_RXTX_CPLT_FLG);
   }
 }
 
@@ -688,8 +699,8 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi){
   */
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
   if (hspi->Instance == SPI2) {
-    // Send flag to spiTransmitTask indicating that the SPI2 transmission is complete (Flag 0x00000001U)
-    osThreadFlagsSet(spiTransmitTaskHandle, 0x00000001U);
+    // Send flag to spiTransmitTask indicating that the SPI2 transmission is complete (SPI_TX_CPLT_FLG)
+    osThreadFlagsSet(spiTransmitTaskHandle, SPI_TX_CPLT_FLG);
   }
 }
 
@@ -700,15 +711,15 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi){
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   if (GPIO_Pin == RXFIFO_THR_Pin) {
-    // Send flag to spiReceiveTask indicating that the RX FIFO threshold has been reached (Flag 0x00000020U)
-    osThreadFlagsSet(spiReceiveTaskHandle, 0x00000020U);
+    // Send flag to spiReceiveTask indicating that the RX FIFO threshold has been reached (RX_FIFO_THR_RE_FLG)
+    osThreadFlagsSet(spiReceiveTaskHandle, RX_FIFO_THR_RE_FLG);
   } else if (GPIO_Pin == PKT_SYNC_RXTX_Pin) {
     if (HAL_GPIO_ReadPin(PKT_SYNC_RXTX_GPIO_Port, PKT_SYNC_RXTX_Pin) == GPIO_PIN_SET) {
-      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to HIGH (Flag 0x00000040U)
-      osThreadFlagsSet(spiReceiveTaskHandle, 0x00000040U);
+      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to HIGH (PKT_SYNC_RXTX_RE_FLG)
+      osThreadFlagsSet(spiReceiveTaskHandle, PKT_SYNC_RXTX_RE_FLG);
     } else {
-      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to LOW (Flag 0x00000080U)
-      osThreadFlagsSet(spiReceiveTaskHandle, 0x00000080U);
+      // Send flag to spiReceiveTask indicating that the PKT_SYNC_RXTX pin has changed state to LOW (PKT_SYNC_RXTX_FE_FLG)
+      osThreadFlagsSet(spiReceiveTaskHandle, PKT_SYNC_RXTX_FE_FLG);
     }
   }
 }
@@ -777,8 +788,7 @@ void SPIReceiveTask(void *argument)
 {
   /* USER CODE BEGIN SPIReceiveTask */
   
-  CC1200_SetSPIHandle(&hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin);
-  CC1200_SetUserMISOPins(SPI1_MISO_U_GPIO_Port, SPI1_MISO_U_Pin);
+  CC1200_SetSPIHandle(&hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin, SPI1_MISO_U_GPIO_Port, SPI1_MISO_U_Pin, SPI_RXTX_CPLT_FLG);
 
   uint8_t headerBuffer[3];
   
@@ -912,7 +922,7 @@ void SPITransmitTask(void *argument)
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_SET);
 
       // Wait for the transmission to complete by waiting for the flag set in the HAL_SPI_TxCpltCallback callback function
-      osThreadFlagsWait(0x00000001U, osFlagsWaitAny, osWaitForever);
+      osThreadFlagsWait(SPI_TX_CPLT_FLG, osFlagsWaitAny, osWaitForever);
 
       // Reset the SPI2_INT_Pin to indicate that the transmission is complete
       HAL_GPIO_WritePin(SPI2_INT_GPIO_Port, SPI2_INT_Pin, GPIO_PIN_RESET);
