@@ -128,6 +128,7 @@ volatile uint32_t count, count2, count3, count4, count5, count6, count7 = 0;
 volatile uint32_t getSPI1, putSPI1, getCRC, putCRC, getSPI2, putSPI2 = 0;
 
 static buffer_t *currentReceiveBuffer = NULL;
+static buffer_t *nextReceiveBuffer = NULL;
 static buffer_t *currentCRCBuffer = NULL;
 static buffer_t *currentTransmitBuffer = NULL;
 
@@ -790,44 +791,63 @@ void SPIReceiveTask(void *argument)
   
   CC1200_SetSPIHandle(&hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin, SPI1_MISO_U_GPIO_Port, SPI1_MISO_U_Pin, SPI_RXTX_CPLT_FLG);
 
-  uint8_t headerBuffer[3];
+  // uint8_t headerBuffer[3];
   
   CC1200_Init();
 
-  // Wait for a buffer to be available from the SPI transmit queue
+  // Wait for two buffers to be available from the SPI transmit queue
   osMessageQueueGet(spiReceiveQueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+  osMessageQueueGet(spiReceiveQueueHandle, &nextReceiveBuffer, NULL, osWaitForever);
   getSPI1 = getSPI1 + 1;
   count = osMessageQueueGetCount(spiReceiveQueueHandle);
   uint16_t currentStartOffset = 0;
 
   // Put CC1200 in RX Mode
-  CC1200_CommandStrobe(CC1200_SIDLE);
-  CC1200_CommandStrobe(CC1200_SFRX);
-  CC1200_CommandStrobe(CC1200_SRX);
+  // CC1200_CommandStrobe(CC1200_SIDLE);
+  // CC1200_CommandStrobe(CC1200_SFRX);
+  // CC1200_CommandStrobe(CC1200_SRX);
 
   /* Infinite loop */
   for(;;){
     
-    CC1200_ReceiveHeader(&headerBuffer[0]);
+    // CC1200_ReceiveHeader(&headerBuffer[0]);
 
-    if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1)) {
+    // if ((headerBuffer[1] + currentStartOffset + 2 > BUFFER_SIZE-1)) {
+    //   currentReceiveBuffer->buffer[currentStartOffset] = 0;
+    //   osMessageQueuePut(crcQueueHandle, &currentReceiveBuffer, 0, 0);
+    //   putSPI1 = putSPI1 + 1;
+    //   osMessageQueueGet(spiReceiveQueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
+    //   getSPI1 = getSPI1 + 1;
+    //   currentStartOffset = 0;
+    // }
+
+    // currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
+    // currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
+    // uint8_t payloadReceived = CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]);
+    // if(payloadReceived == 0){
+    //   currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
+    //   count4 += 1;
+    //   CC1200_CommandStrobe(CC1200_SRX);
+    // } else {
+    //   count7 += 1;
+    // }
+
+    if(!CC1200_ReceivePacket(currentReceiveBuffer->buffer + currentStartOffset, (BUFFER_SIZE-1) - currentStartOffset, nextReceiveBuffer->buffer)){
+
       currentReceiveBuffer->buffer[currentStartOffset] = 0;
       osMessageQueuePut(crcQueueHandle, &currentReceiveBuffer, 0, 0);
       putSPI1 = putSPI1 + 1;
-      osMessageQueueGet(spiReceiveQueueHandle, &currentReceiveBuffer, NULL, osWaitForever);
-      getSPI1 = getSPI1 + 1;
-      currentStartOffset = 0;
-    }
 
-    currentReceiveBuffer->buffer[currentStartOffset] = headerBuffer[1];   // Packet Length
-    currentReceiveBuffer->buffer[currentStartOffset+1] = headerBuffer[2]; // ID
-    uint8_t payloadReceived = CC1200_ReceivePayload(currentReceiveBuffer->buffer + currentStartOffset + 2, headerBuffer[0]);
-    if(payloadReceived == 0){
-      currentStartOffset += headerBuffer[0] + 2; // Payload (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
+      currentReceiveBuffer = nextReceiveBuffer;
+
+      osMessageQueueGet(spiReceiveQueueHandle, &nextReceiveBuffer, NULL, osWaitForever);
+      getSPI1 = getSPI1 + 1;
+
+      currentStartOffset = nextReceiveBuffer->buffer[0] + 2; // Payload Length (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
+    }
+    else {
+      currentStartOffset += (currentReceiveBuffer->buffer[currentStartOffset] + 2); // Payload Length (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
       count4 += 1;
-      CC1200_CommandStrobe(CC1200_SRX);
-    } else {
-      count7 += 1;
     }
 
   }
