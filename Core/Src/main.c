@@ -791,7 +791,7 @@ void SPIReceiveTask(void *argument)
   
   CC1200_SetSPIHandle(&hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin, SPI1_MISO_U_GPIO_Port, SPI1_MISO_U_Pin, SPI_RXTX_CPLT_FLG);
 
-  // uint8_t headerBuffer[3];
+  CC1200_SetRXInterruptFlags(PKT_SYNC_RXTX_RE_FLG, PKT_SYNC_RXTX_FE_FLG, RX_FIFO_THR_RE_FLG);
   
   CC1200_Init();
 
@@ -843,7 +843,7 @@ void SPIReceiveTask(void *argument)
       osMessageQueueGet(spiReceiveQueueHandle, &nextReceiveBuffer, NULL, osWaitForever);
       getSPI1 = getSPI1 + 1;
 
-      currentStartOffset = nextReceiveBuffer->buffer[0] + 2; // Payload Length (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
+      currentStartOffset = currentReceiveBuffer->buffer[0] + 2; // Payload Length (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
     }
     else {
       currentStartOffset += (currentReceiveBuffer->buffer[currentStartOffset] + 2); // Payload Length (Packet Length + ID + DATA + CRC) + 2byte (CC1200 CRC RSSI)
